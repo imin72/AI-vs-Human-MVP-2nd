@@ -1,0 +1,22 @@
+{
+  "name": "AI vs Human",
+  "short_name": "AI vs Human",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "description": "Prove your humanity. Challenge the AI in a battle of wits.",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/4712/4712009.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/4712/4712009.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
