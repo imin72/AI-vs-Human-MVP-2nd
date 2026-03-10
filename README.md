@@ -35,3 +35,17 @@ npm run commit:quick -- "your commit message"
 ```bash
 npm run commit:quick -- "your commit message" --skip-build
 ```
+
+
+## Soft-launch Observability (Phase 2)
+
+Runtime metrics are collected in-memory via `services/metricsService.ts`.
+
+You can inspect a session KPI summary from browser console:
+
+```ts
+import { getSessionMetricsSummary } from './services/metricsService';
+console.log(getSessionMetricsSummary());
+```
+
+Summary includes API call/retry/error/dedupe counts, cache hit rate, fallback rate, and p50/p95 latency for quiz generation/evaluation.
