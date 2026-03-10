@@ -18,3 +18,20 @@ View your app in AI Studio: https://ai.studio/apps/drive/1ht-JZ7b_uqT_spdSGk4lLL
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+
+## Quick Commit Helper
+
+You can commit current changes in one command:
+
+```bash
+npm run commit:quick -- "your commit message"
+```
+
+- Runs a production build check first (`npm run -s build`).
+- Stages all changes and creates a commit.
+- To skip the build check:
+
+```bash
+npm run commit:quick -- "your commit message" --skip-build
+```

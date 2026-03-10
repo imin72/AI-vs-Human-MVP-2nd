@@ -9,6 +9,20 @@ import { generateContentJSON } from "./geminiClient";
 // Import AI Persona DB
 import { getAiComments, getRandomComment, generateSmartComment } from "../data/aiObserverDB";
 
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Adds a small UX floor without forcing long fixed delays.
+ * If processing already took long enough, returns immediately.
+ */
+export const waitForMinimumDelay = async (startedAt: number, minimumMs: number) => {
+  const elapsed = Date.now() - startedAt;
+  const remaining = minimumMs - elapsed;
+  if (remaining > 0) {
+    await wait(remaining);
+  }
+};
+
 // --- Safe Environment Helpers ---
 const isDev = () => {
   if (typeof window !== 'undefined') {
@@ -116,27 +130,49 @@ export const generateQuestionsBatch = async (
 
   // PROCESS TRANSLATIONS
   if (translationRequests.length > 0) {
-    for (const item of translationRequests) {
-      try {
-        const { req, sourceData } = item;
-        const sourceSelection = sourceData.filter(q => !seenIds.has(q.id)).slice(0, 5);
-        
-        if (sourceSelection.length === 0) {
-          missingRequests.push(req);
-          continue;
-        }
+    const prepared = translationRequests
+      .map(item => ({
+        req: item.req,
+        sourceSelection: item.sourceData.filter(q => !seenIds.has(q.id)).slice(0, 5)
+      }));
 
-        const prompt = `Translate these quiz questions from English to ${lang}. Return valid JSON matching structure. INPUT: ${JSON.stringify(sourceSelection)}`;
-        const translatedQs = await generateContentJSON(prompt);
-        
-        // Cache It
-        await updateCacheEntry(generateCacheKey(req.stableId, difficulty, lang), translatedQs);
-        results.push({ topic: req.originalLabel, questions: translatedQs, categoryId: req.catId });
-        console.log(`[Source: Translation] ${req.stableId}`);
-
-      } catch (e) {
-        console.error("Translation Failed, falling back to gen", e);
+    prepared.forEach(item => {
+      if (item.sourceSelection.length === 0) {
         missingRequests.push(item.req);
+      }
+    });
+
+    const translatable = prepared.filter(item => item.sourceSelection.length > 0);
+
+    if (translatable.length > 0) {
+      try {
+        const payload = translatable.reduce((acc, item) => {
+          acc[item.req.stableId] = item.sourceSelection;
+          return acc;
+        }, {} as Record<string, QuizQuestion[]>);
+
+        const prompt = `Translate quiz questions from English to ${lang}. Return valid JSON only.\n\nRULES:\n1) Keep the same top-level keys (topic ids).\n2) Each key must map to an array of translated question objects.\n3) Preserve id values.\n4) Keep options count and correctAnswer aligned with translated options.\n\nINPUT: ${JSON.stringify(payload)}`;
+        const translatedByTopic = await generateContentJSON(prompt);
+
+        const updatePromises: Promise<void>[] = [];
+
+        translatable.forEach(item => {
+          const key = Object.keys(translatedByTopic || {}).find(k => k.toLowerCase() === item.req.stableId.toLowerCase());
+          const translatedQs = key ? translatedByTopic[key] : null;
+
+          if (Array.isArray(translatedQs) && translatedQs.length > 0) {
+            updatePromises.push(updateCacheEntry(generateCacheKey(item.req.stableId, difficulty, lang), translatedQs));
+            results.push({ topic: item.req.originalLabel, questions: translatedQs, categoryId: item.req.catId });
+            console.log(`[Source: TranslationBatch] ${item.req.stableId}`);
+          } else {
+            missingRequests.push(item.req);
+          }
+        });
+
+        await Promise.all(updatePromises);
+      } catch (e) {
+        console.error("Translation Batch Failed, falling back to gen", e);
+        translatable.forEach(item => missingRequests.push(item.req));
       }
     }
   }
@@ -233,12 +269,11 @@ export const evaluateBatchAnswers = async (
   _userProfile: UserProfile,
   lang: Language
 ): Promise<EvaluationResult[]> => {
-  // Simulate network delay for realism (immersive "calculating" feel)
-  await new Promise(resolve => setTimeout(resolve, 800));
+  const startedAt = Date.now();
 
   const commentsDB = getAiComments(lang);
 
-  return batches.map(batch => {
+  const evaluated = batches.map(batch => {
     // 1. Determine Score Tier
     let mainComment = "";
     if (batch.score === 100) mainComment = getRandomComment(commentsDB.perfect);
@@ -287,4 +322,9 @@ export const evaluateBatchAnswers = async (
       details
     };
   });
+
+  // Keep brief analysis feedback, but avoid unnecessary fixed waits.
+  await waitForMinimumDelay(startedAt, 250);
+
+  return evaluated;
 };

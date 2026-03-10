@@ -1,7 +1,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { AppStage, Language, QuizSet, HistoryItem, EvaluationResult, QuizQuestion } from '../types';
-import { generateQuestionsBatch, evaluateBatchAnswers, BatchEvaluationInput, seedLocalDatabase } from '../services/geminiService';
+import { generateQuestionsBatch, evaluateBatchAnswers, BatchEvaluationInput, seedLocalDatabase, waitForMinimumDelay } from '../services/geminiService';
 import { audioHaptic } from '../services/audioHapticService';
 import { TRANSLATIONS } from '../utils/translations';
 
@@ -35,6 +35,14 @@ const DEBUG_QUIZ: QuizQuestion[] = [
     context: "useEffect handles side effects in function components."
   }
 ];
+
+
+const getAdaptiveTransitionDelay = () => {
+  const cores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+  if (cores >= 8) return 150;
+  if (cores >= 4) return 250;
+  return 350;
+};
 
 // Helper to detect browser language
 const getBrowserLanguage = (): Language => {
@@ -289,11 +297,13 @@ export const useGameViewModel = () => {
     quiz.actions.setUserAnswers(updatedAnswers);
     
     if (quiz.state.currentQuestionIndex < quiz.state.questions.length - 1) {
-      setTimeout(() => {
-         quiz.actions.setCurrentQuestionIndex(prev => prev + 1);
-         quiz.actions.setSelectedOption(null);
-         quiz.actions.setIsSubmitting(false);
-      }, 800); 
+      (async () => {
+        const startedAt = Date.now();
+        await waitForMinimumDelay(startedAt, getAdaptiveTransitionDelay());
+        quiz.actions.setCurrentQuestionIndex(prev => prev + 1);
+        quiz.actions.setSelectedOption(null);
+        quiz.actions.setIsSubmitting(false);
+      })();
     } else {
       // Topic Finished
       const currentTopicLabel = quiz.state.currentQuizSet?.topic || "Unknown";
@@ -311,16 +321,18 @@ export const useGameViewModel = () => {
       const isLastTopic = quiz.state.batchProgress.current >= quiz.state.batchProgress.total;
 
       if (!isLastTopic) {
-         setTimeout(() => {
-             const hasNext = quiz.state.quizQueue.length > 0;
-             if (hasNext) {
-                 quiz.actions.handleNextTopic();
-                 quiz.actions.setIsSubmitting(false); 
-             } else {
-                 waitingForNextTopicRef.current = true;
-                 nav.setStage(AppStage.LOADING_QUIZ);
-             }
-         }, 800);
+         (async () => {
+            const startedAt = Date.now();
+            await waitForMinimumDelay(startedAt, getAdaptiveTransitionDelay());
+            const hasNext = quiz.state.quizQueue.length > 0;
+            if (hasNext) {
+                quiz.actions.handleNextTopic();
+                quiz.actions.setIsSubmitting(false);
+            } else {
+                waitingForNextTopicRef.current = true;
+                nav.setStage(AppStage.LOADING_QUIZ);
+            }
+         })();
       } else {
          finishBatchQuiz(newCompletedBatches).then(() => {
              quiz.actions.setIsSubmitting(false);
