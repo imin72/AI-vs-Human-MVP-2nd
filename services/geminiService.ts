@@ -8,6 +8,7 @@ import { generateContentJSON } from "./geminiClient";
 
 // Import AI Persona DB
 import { getAiComments, getRandomComment, generateSmartComment } from "../data/aiObserverDB";
+import { trackMetric } from "./metricsService";
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -76,6 +77,7 @@ export const generateQuestionsBatch = async (
   userProfile?: UserProfile
 ): Promise<QuizSet[]> => {
   const results: QuizSet[] = [];
+  const generationStartedAt = Date.now();
   
   const resolvedRequests = topics.map(topicLabel => {
     const info = resolveTopicInfo(topicLabel, lang);
@@ -100,6 +102,7 @@ export const generateQuestionsBatch = async (
       if (unseen.length >= 5) {
         results.push({ topic: req.originalLabel, questions: unseen.sort(() => 0.5 - Math.random()).slice(0, 5), categoryId: req.catId });
         console.log(`[Source: StaticDB] ${req.stableId}`);
+        trackMetric("quiz.source.hit", 1, { source: "static", topic: req.stableId, lang, difficulty });
         continue;
       }
     }
@@ -111,6 +114,7 @@ export const generateQuestionsBatch = async (
        if (unseen.length >= 5) {
            results.push({ topic: req.originalLabel, questions: unseen.sort(() => 0.5 - Math.random()).slice(0, 5), categoryId: req.catId });
            console.log(`[Source: Cache] ${req.stableId}`);
+           trackMetric("quiz.source.hit", 1, { source: "cache", topic: req.stableId, lang, difficulty });
            continue;
        }
     }
@@ -164,6 +168,7 @@ export const generateQuestionsBatch = async (
             updatePromises.push(updateCacheEntry(generateCacheKey(item.req.stableId, difficulty, lang), translatedQs));
             results.push({ topic: item.req.originalLabel, questions: translatedQs, categoryId: item.req.catId });
             console.log(`[Source: TranslationBatch] ${item.req.stableId}`);
+            trackMetric("quiz.source.hit", 1, { source: "translation", topic: item.req.stableId, lang, difficulty });
           } else {
             missingRequests.push(item.req);
           }
@@ -172,6 +177,7 @@ export const generateQuestionsBatch = async (
         await Promise.all(updatePromises);
       } catch (e) {
         console.error("Translation Batch Failed, falling back to gen", e);
+        trackMetric("quiz.translation.error", 1, { lang, difficulty, count: translatable.length });
         translatable.forEach(item => missingRequests.push(item.req));
       }
     }
@@ -232,9 +238,11 @@ export const generateQuestionsBatch = async (
             
             updatePromises.push(updateCacheEntry(generateCacheKey(req.stableId, difficulty, lang), formatted));
             results.push({ topic: req.originalLabel, questions: formatted, categoryId: req.catId });
+            trackMetric("quiz.source.hit", 1, { source: "generation", topic: req.stableId, lang, difficulty });
           } else {
              // Fallback ONLY for this specific topic if missing
              console.warn(`[Gen] Missing data for ${req.stableId}, using fallback.`);
+             trackMetric("quiz.fallback", 1, { reason: "missing_topic_payload", topic: req.stableId, lang, difficulty });
              results.push({ topic: req.originalLabel, questions: FALLBACK_QUIZ, categoryId: req.catId });
           }
         });
@@ -243,15 +251,23 @@ export const generateQuestionsBatch = async (
 
       } catch (e) {
         console.error("Batch Gen Failed completely", e);
+        trackMetric("quiz.generation.error", 1, { lang, difficulty, count: missingRequests.length });
         // Fallback for ALL missing requests if the API call itself failed
         missingRequests.forEach(req => {
            results.push({ topic: req.originalLabel, questions: FALLBACK_QUIZ, categoryId: req.catId });
+           trackMetric("quiz.fallback", 1, { reason: "generation_failure", topic: req.stableId, lang, difficulty });
         });
       }
   }
 
   // Ensure results are sorted in the requested order
-  return topics.map(t => results.find(r => r.topic === t)!).filter(Boolean);
+  const ordered = topics.map(t => results.find(r => r.topic === t)!).filter(Boolean);
+  trackMetric("quiz.generation.latency_ms", Date.now() - generationStartedAt, {
+    topics: topics.length,
+    lang,
+    difficulty
+  });
+  return ordered;
 };
 
 export interface BatchEvaluationInput {
@@ -325,6 +341,10 @@ export const evaluateBatchAnswers = async (
 
   // Keep brief analysis feedback, but avoid unnecessary fixed waits.
   await waitForMinimumDelay(startedAt, 250);
+  trackMetric("quiz.evaluation.latency_ms", Date.now() - startedAt, {
+    batches: batches.length,
+    lang
+  });
 
   return evaluated;
 };
