@@ -2,6 +2,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { AppStage, Language, QuizSet, HistoryItem, EvaluationResult, QuizQuestion } from '../types';
 import { generateQuestionsBatch, evaluateBatchAnswers, BatchEvaluationInput, seedLocalDatabase, waitForMinimumDelay } from '../services/geminiService';
+import { trackMetric } from '../services/metricsService';
 import { audioHaptic } from '../services/audioHapticService';
 import { TRANSLATIONS } from '../utils/translations';
 
@@ -60,6 +61,7 @@ export const useGameViewModel = () => {
   
   // New State for Pipeline Loading
   const [isBackgroundLoading, setIsBackgroundLoading] = useState(false);
+  const [loadingHint, setLoadingHint] = useState<string>('Preparing first quiz set...');
   // Ref to track if we need to auto-advance when background loading finishes
   const waitingForNextTopicRef = useRef(false);
   const isHandlingExitRef = useRef(false);
@@ -195,12 +197,14 @@ export const useGameViewModel = () => {
     try {
       audioHaptic.playClick('hard');
       setIsPending(true);
+      setLoadingHint('Preparing first quiz set...');
       nav.setStage(AppStage.LOADING_QUIZ);
 
       // 1. Separate First Topic & Rest
       const [firstTopic, ...restTopics] = allTopics;
       
       // 2. Fetch FIRST Topic immediately
+      trackMetric('ux.loading.phase', 1, { phase: 'first_topic_start' });
       const firstSet = await generateQuestionsBatch(
         [firstTopic],
         topicMgr.state.difficulty,
@@ -220,30 +224,56 @@ export const useGameViewModel = () => {
       // 5. Background Fetch for Rest (if any)
       if (restTopics.length > 0) {
         setIsBackgroundLoading(true);
-        // Fire and forget (handled by promise chain)
-        generateQuestionsBatch(
-          restTopics,
-          topicMgr.state.difficulty,
-          language,
-          profile.userProfile
-        ).then((backgroundSets) => {
-           if (backgroundSets.length > 0) {
-             quiz.actions.appendQuizSets(backgroundSets);
-           }
-        }).catch((err) => {
-           console.warn("Background loading failed", err);
-        }).finally(() => {
-           setIsBackgroundLoading(false);
-           // If user was stuck waiting, auto-advance now
-           if (waitingForNextTopicRef.current) {
-             waitingForNextTopicRef.current = false;
-             setTimeout(() => {
-                if (quiz.actions.handleNextTopic()) {
+        setLoadingHint('Preparing next topics in background...');
+
+        const loadBackgroundTopics = async (attempt = 1): Promise<void> => {
+          try {
+            trackMetric('ux.loading.phase', 1, { phase: 'background_start', attempt, topics: restTopics.length });
+            const backgroundSets = await generateQuestionsBatch(
+              restTopics,
+              topicMgr.state.difficulty,
+              language,
+              profile.userProfile
+            );
+
+            if (backgroundSets.length > 0) {
+              quiz.actions.appendQuizSets(backgroundSets);
+            }
+
+            setLoadingHint('Background topic sync complete.');
+            trackMetric('ux.loading.phase', 1, { phase: 'background_done', attempt, loaded: backgroundSets.length });
+          } catch (err) {
+            console.warn('Background loading failed', err);
+            trackMetric('ux.loading.phase', 1, { phase: 'background_failed', attempt });
+
+            if (attempt < 2) {
+              setLoadingHint('Network unstable. Retrying background sync...');
+              await waitForMinimumDelay(Date.now(), 500);
+              await loadBackgroundTopics(attempt + 1);
+              return;
+            }
+
+            setLoadingHint('Background prep delayed. You can continue with available topics.');
+          } finally {
+            if (attempt === 1 || attempt === 2) {
+              setIsBackgroundLoading(false);
+              // If user was stuck waiting, auto-advance now
+              if (waitingForNextTopicRef.current) {
+                waitingForNextTopicRef.current = false;
+                setTimeout(() => {
+                  if (quiz.actions.handleNextTopic()) {
                     nav.setStage(AppStage.QUIZ);
-                }
-             }, 500);
-           }
-        });
+                  } else {
+                    setLoadingHint('Still preparing. Please wait a moment...');
+                    nav.setStage(AppStage.LOADING_QUIZ);
+                  }
+                }, 300);
+              }
+            }
+          }
+        };
+
+        void loadBackgroundTopics();
       }
 
     } catch (e: any) {
@@ -268,6 +298,7 @@ export const useGameViewModel = () => {
         waitingForNextTopicRef.current = true;
         nav.setStage(AppStage.LOADING_QUIZ); 
       } else {
+        setLoadingHint('No queued topics left. Showing latest available results.');
         console.warn("Queue empty and no background loading.");
       }
     }
@@ -534,6 +565,7 @@ export const useGameViewModel = () => {
         userProfile: profile.userProfile
       },
       quizState: quiz.state,
+      loadingState: { isBackgroundLoading, hint: loadingHint },
       resultState: { evaluation, sessionResults, errorMsg } 
     },
     actions,

@@ -14,7 +14,7 @@ import { ErrorView } from './views/ErrorView.tsx';
 
 export default function App() {
   const { state, actions, swipeHandlers, t } = useGameViewModel();
-  const { stage, language, userProfile, topicState, quizState, resultState } = state;
+  const { stage, language, userProfile, topicState, quizState, loadingState, resultState } = state;
 
   return (
     <Layout 
@@ -83,6 +83,7 @@ export default function App() {
           text={t.loading.gen_vectors} 
           logs={t.loading.logs} 
           syncText={t.loading.sync}
+          hint={loadingState?.hint}
         />
       )}
       
@@ -107,6 +108,7 @@ export default function App() {
           text={t.loading.analyzing} 
           logs={t.loading.logs} 
           syncText={t.loading.sync}
+          hint={loadingState?.hint}
         />
       )}
       
