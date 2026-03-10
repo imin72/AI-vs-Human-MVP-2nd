@@ -490,7 +490,6 @@ export const useGameViewModel = () => {
         window.history.pushState({ stage: AppStage.TOPIC_SELECTION, phase: 'SUBTOPIC' }, '');
     },
     selectSubTopic: topicMgr.actions.selectSubTopic,
-    setDifficulty: topicMgr.actions.setDifficulty,
     shuffleTopics: topicMgr.actions.shuffleTopics,
     shuffleSubTopics: () => {}, 
     setCustomTopic: (_topic: string) => {},

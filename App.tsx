@@ -54,7 +54,7 @@ export default function App() {
       
       {stage === AppStage.TOPIC_SELECTION && (
         <TopicSelectionView 
-          t={{...t.topics, difficulty: t.difficulty, btn_back: t.common.btn_back}} 
+          t={{...t.topics, btn_back: t.common.btn_back}} 
           state={{
             ...topicState,
             errorMsg: resultState.errorMsg,
@@ -70,7 +70,6 @@ export default function App() {
             setCustomTopic: actions.setCustomTopic,
             shuffleSubTopics: actions.shuffleSubTopics,
             selectSubTopic: actions.selectSubTopic,
-            setDifficulty: actions.setDifficulty,
             startQuiz: actions.startQuiz,
             editProfile: actions.editProfile,
             setLanguage: actions.setLanguage
