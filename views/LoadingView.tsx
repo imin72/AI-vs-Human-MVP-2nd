@@ -6,9 +6,10 @@ interface LoadingViewProps {
   text: string;
   logs?: string[];
   syncText?: string;
+  hint?: string;
 }
 
-export const LoadingView: React.FC<LoadingViewProps> = ({ text, logs, syncText = "SYNCHRONIZING..." }) => {
+export const LoadingView: React.FC<LoadingViewProps> = ({ text, logs, syncText = "SYNCHRONIZING...", hint }) => {
   const [progress, setProgress] = useState(0);
   const [displayedLogs, setDisplayedLogs] = useState<string[]>([]);
   
@@ -96,6 +97,12 @@ export const LoadingView: React.FC<LoadingViewProps> = ({ text, logs, syncText =
              <span>{syncText} {progress}%</span>
           </div>
         </div>
+
+        {hint && (
+          <div className="w-full mb-4 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-center text-xs text-cyan-200">
+            {hint}
+          </div>
+        )}
 
         {/* Loading Bar */}
         <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mb-6 border border-slate-700">

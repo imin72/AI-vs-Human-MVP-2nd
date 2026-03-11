@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/Button.tsx';
 import { LanguageSwitcher } from '../components/LanguageSwitcher.tsx';
-import { Difficulty, TOPIC_IDS, UserProfile, Language } from '../types.ts';
+import { TOPIC_IDS, UserProfile, Language } from '../types.ts';
 import { getTierInfo, calculateAggregateElo, getNextTierThreshold } from '../utils/tierUtils';
 import { useAppNavigation } from '../hooks/useAppNavigation';
 
@@ -17,7 +17,6 @@ interface TopicSelectionViewProps {
     selectionPhase?: 'CATEGORY' | 'SUBTOPIC';
     selectedCategories: string[];
     selectedSubTopics: string[];
-    difficulty: Difficulty;
     displayedTopics: {id: string, label: string}[];
     isTopicLoading: boolean;
     errorMsg: string;
@@ -32,7 +31,6 @@ interface TopicSelectionViewProps {
     proceedToSubTopics?: () => void;
     shuffleSubTopics: () => void;
     selectSubTopic: (sub: string) => void;
-    setDifficulty: (diff: Difficulty) => void;
     startQuiz: () => void;
     setCustomTopic: (topic: string) => void;
     editProfile: () => void;
@@ -64,7 +62,7 @@ const getCategoryIcon = (id: string) => {
 
 export const TopicSelectionView: React.FC<TopicSelectionViewProps> = ({ t, state, actions, language }) => {
   const { isBackNav } = useAppNavigation();
-  const { selectionPhase = 'CATEGORY', selectedCategories, selectedSubTopics, difficulty, displayedTopics, errorMsg, userProfile } = state;
+  const { selectionPhase = 'CATEGORY', selectedCategories, selectedSubTopics, displayedTopics, errorMsg, userProfile } = state;
   const isCategoryPhase = selectionPhase === 'CATEGORY';
 
   // Standardized button style for top right controls: Fixed width/height (w-10 h-10) for perfect alignment
@@ -286,26 +284,10 @@ export const TopicSelectionView: React.FC<TopicSelectionViewProps> = ({ t, state
             </div>
 
             <div className="p-4 bg-slate-900/90 backdrop-blur-md border-t border-slate-800 shrink-0 space-y-3">
-              <div className="flex items-center justify-between px-1">
-                 <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">{t.label_difficulty}</label>
+              <div className="flex items-center justify-end px-1">
                  <span className="text-[10px] text-cyan-500 font-mono">{selectedSubTopics.length} {t.label_topics_selected}</span>
               </div>
-              <div className="flex gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
-                {Object.values(Difficulty).map((diff) => (
-                  <button 
-                    key={diff} 
-                    onClick={() => actions.setDifficulty(diff)} 
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                      difficulty === diff 
-                        ? 'bg-cyan-600 text-white shadow-lg' 
-                        : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    {t.difficulty[diff]}
-                  </button>
-                ))}
-              </div>
-            
+
               <Button 
                 onClick={actions.startQuiz} 
                 disabled={selectedSubTopics.length === 0} 

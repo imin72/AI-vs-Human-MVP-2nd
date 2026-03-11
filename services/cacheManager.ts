@@ -3,6 +3,14 @@ import { Difficulty, Language, QuizQuestion } from '../types';
 const DB_NAME = 'AiVsHumanDB';
 const STORE_NAME = 'quiz_cache';
 const DB_VERSION = 1;
+const CACHE_SCHEMA_VERSION = 1;
+const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+
+type CachePayload = {
+  questions: QuizQuestion[];
+  savedAt: number;
+  version: number;
+};
 
 /**
  * Generates a unique cache key for a quiz set.
@@ -32,6 +40,16 @@ const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
+const isLegacyArray = (raw: unknown): raw is QuizQuestion[] => {
+  return Array.isArray(raw);
+};
+
+const isCachePayload = (raw: unknown): raw is CachePayload => {
+  if (!raw || typeof raw !== 'object') return false;
+  const payload = raw as Partial<CachePayload>;
+  return Array.isArray(payload.questions) && typeof payload.savedAt === 'number' && typeof payload.version === 'number';
+};
+
 /**
  * Retrieves a specific entry from the IndexedDB cache.
  * Replaces the synchronous localStorage access.
@@ -39,13 +57,32 @@ const openDB = (): Promise<IDBDatabase> => {
 export const getCacheEntry = async (key: string): Promise<QuizQuestion[] | null> => {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    const raw = await new Promise<unknown>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, 'readonly');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.get(key);
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
     });
+
+    // Backward compatibility: old cache format stored plain arrays.
+    if (isLegacyArray(raw)) {
+      return raw;
+    }
+
+    if (!isCachePayload(raw)) {
+      return null;
+    }
+
+    if (raw.version !== CACHE_SCHEMA_VERSION) {
+      return null;
+    }
+
+    if (Date.now() - raw.savedAt > CACHE_TTL_MS) {
+      return null;
+    }
+
+    return raw.questions;
   } catch (error) {
     console.warn("[CacheManager] Read failed", error);
     return null;
@@ -61,7 +98,12 @@ export const updateCacheEntry = async (key: string, questions: QuizQuestion[]) =
     return new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      store.put(questions, key);
+      const payload: CachePayload = {
+        questions,
+        savedAt: Date.now(),
+        version: CACHE_SCHEMA_VERSION
+      };
+      store.put(payload, key);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });

@@ -34,6 +34,7 @@ export const useTopicManager = (language: Language) => {
     setSelectedCategories([]);
     setSelectedSubTopics([]);
     setSelectionPhase('CATEGORY');
+    setDifficulty(Difficulty.MEDIUM);
   }, [language]);
 
   const shuffleTopics = useCallback(() => {
@@ -72,11 +73,6 @@ export const useTopicManager = (language: Language) => {
     });
   }, []);
 
-  const setDifficultyWithSound = useCallback((diff: Difficulty) => {
-    try { audioHaptic.playClick('soft'); } catch {}
-    setDifficulty(diff);
-  }, []);
-
   const resetSelection = useCallback(() => {
     setSelectionPhase('CATEGORY');
     setSelectedCategories([]);
@@ -101,7 +97,6 @@ export const useTopicManager = (language: Language) => {
       selectCategory,
       proceedToSubTopics,
       selectSubTopic,
-      setDifficulty: setDifficultyWithSound,
       resetSelection,
       backToCategories,
       // Helper setter for raw state access if needed

@@ -8,6 +8,21 @@ import { generateContentJSON } from "./geminiClient";
 
 // Import AI Persona DB
 import { getAiComments, getRandomComment, generateSmartComment } from "../data/aiObserverDB";
+import { trackMetric } from "./metricsService";
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Adds a small UX floor without forcing long fixed delays.
+ * If processing already took long enough, returns immediately.
+ */
+export const waitForMinimumDelay = async (startedAt: number, minimumMs: number) => {
+  const elapsed = Date.now() - startedAt;
+  const remaining = minimumMs - elapsed;
+  if (remaining > 0) {
+    await wait(remaining);
+  }
+};
 
 // --- Safe Environment Helpers ---
 const isDev = () => {
@@ -62,6 +77,7 @@ export const generateQuestionsBatch = async (
   userProfile?: UserProfile
 ): Promise<QuizSet[]> => {
   const results: QuizSet[] = [];
+  const generationStartedAt = Date.now();
   
   const resolvedRequests = topics.map(topicLabel => {
     const info = resolveTopicInfo(topicLabel, lang);
@@ -86,6 +102,7 @@ export const generateQuestionsBatch = async (
       if (unseen.length >= 5) {
         results.push({ topic: req.originalLabel, questions: unseen.sort(() => 0.5 - Math.random()).slice(0, 5), categoryId: req.catId });
         console.log(`[Source: StaticDB] ${req.stableId}`);
+        trackMetric("quiz.source.hit", 1, { source: "static", topic: req.stableId, lang, difficulty });
         continue;
       }
     }
@@ -97,6 +114,7 @@ export const generateQuestionsBatch = async (
        if (unseen.length >= 5) {
            results.push({ topic: req.originalLabel, questions: unseen.sort(() => 0.5 - Math.random()).slice(0, 5), categoryId: req.catId });
            console.log(`[Source: Cache] ${req.stableId}`);
+           trackMetric("quiz.source.hit", 1, { source: "cache", topic: req.stableId, lang, difficulty });
            continue;
        }
     }
@@ -116,27 +134,51 @@ export const generateQuestionsBatch = async (
 
   // PROCESS TRANSLATIONS
   if (translationRequests.length > 0) {
-    for (const item of translationRequests) {
-      try {
-        const { req, sourceData } = item;
-        const sourceSelection = sourceData.filter(q => !seenIds.has(q.id)).slice(0, 5);
-        
-        if (sourceSelection.length === 0) {
-          missingRequests.push(req);
-          continue;
-        }
+    const prepared = translationRequests
+      .map(item => ({
+        req: item.req,
+        sourceSelection: item.sourceData.filter(q => !seenIds.has(q.id)).slice(0, 5)
+      }));
 
-        const prompt = `Translate these quiz questions from English to ${lang}. Return valid JSON matching structure. INPUT: ${JSON.stringify(sourceSelection)}`;
-        const translatedQs = await generateContentJSON(prompt);
-        
-        // Cache It
-        await updateCacheEntry(generateCacheKey(req.stableId, difficulty, lang), translatedQs);
-        results.push({ topic: req.originalLabel, questions: translatedQs, categoryId: req.catId });
-        console.log(`[Source: Translation] ${req.stableId}`);
-
-      } catch (e) {
-        console.error("Translation Failed, falling back to gen", e);
+    prepared.forEach(item => {
+      if (item.sourceSelection.length === 0) {
         missingRequests.push(item.req);
+      }
+    });
+
+    const translatable = prepared.filter(item => item.sourceSelection.length > 0);
+
+    if (translatable.length > 0) {
+      try {
+        const payload = translatable.reduce((acc, item) => {
+          acc[item.req.stableId] = item.sourceSelection;
+          return acc;
+        }, {} as Record<string, QuizQuestion[]>);
+
+        const prompt = `Translate quiz questions from English to ${lang}. Return valid JSON only.\n\nRULES:\n1) Keep the same top-level keys (topic ids).\n2) Each key must map to an array of translated question objects.\n3) Preserve id values.\n4) Keep options count and correctAnswer aligned with translated options.\n\nINPUT: ${JSON.stringify(payload)}`;
+        const translatedByTopic = await generateContentJSON(prompt);
+
+        const updatePromises: Promise<void>[] = [];
+
+        translatable.forEach(item => {
+          const key = Object.keys(translatedByTopic || {}).find(k => k.toLowerCase() === item.req.stableId.toLowerCase());
+          const translatedQs = key ? translatedByTopic[key] : null;
+
+          if (Array.isArray(translatedQs) && translatedQs.length > 0) {
+            updatePromises.push(updateCacheEntry(generateCacheKey(item.req.stableId, difficulty, lang), translatedQs));
+            results.push({ topic: item.req.originalLabel, questions: translatedQs, categoryId: item.req.catId });
+            console.log(`[Source: TranslationBatch] ${item.req.stableId}`);
+            trackMetric("quiz.source.hit", 1, { source: "translation", topic: item.req.stableId, lang, difficulty });
+          } else {
+            missingRequests.push(item.req);
+          }
+        });
+
+        await Promise.all(updatePromises);
+      } catch (e) {
+        console.error("Translation Batch Failed, falling back to gen", e);
+        trackMetric("quiz.translation.error", 1, { lang, difficulty, count: translatable.length });
+        translatable.forEach(item => missingRequests.push(item.req));
       }
     }
   }
@@ -196,9 +238,11 @@ export const generateQuestionsBatch = async (
             
             updatePromises.push(updateCacheEntry(generateCacheKey(req.stableId, difficulty, lang), formatted));
             results.push({ topic: req.originalLabel, questions: formatted, categoryId: req.catId });
+            trackMetric("quiz.source.hit", 1, { source: "generation", topic: req.stableId, lang, difficulty });
           } else {
              // Fallback ONLY for this specific topic if missing
              console.warn(`[Gen] Missing data for ${req.stableId}, using fallback.`);
+             trackMetric("quiz.fallback", 1, { reason: "missing_topic_payload", topic: req.stableId, lang, difficulty });
              results.push({ topic: req.originalLabel, questions: FALLBACK_QUIZ, categoryId: req.catId });
           }
         });
@@ -207,15 +251,23 @@ export const generateQuestionsBatch = async (
 
       } catch (e) {
         console.error("Batch Gen Failed completely", e);
+        trackMetric("quiz.generation.error", 1, { lang, difficulty, count: missingRequests.length });
         // Fallback for ALL missing requests if the API call itself failed
         missingRequests.forEach(req => {
            results.push({ topic: req.originalLabel, questions: FALLBACK_QUIZ, categoryId: req.catId });
+           trackMetric("quiz.fallback", 1, { reason: "generation_failure", topic: req.stableId, lang, difficulty });
         });
       }
   }
 
   // Ensure results are sorted in the requested order
-  return topics.map(t => results.find(r => r.topic === t)!).filter(Boolean);
+  const ordered = topics.map(t => results.find(r => r.topic === t)!).filter(Boolean);
+  trackMetric("quiz.generation.latency_ms", Date.now() - generationStartedAt, {
+    topics: topics.length,
+    lang,
+    difficulty
+  });
+  return ordered;
 };
 
 export interface BatchEvaluationInput {
@@ -233,12 +285,11 @@ export const evaluateBatchAnswers = async (
   _userProfile: UserProfile,
   lang: Language
 ): Promise<EvaluationResult[]> => {
-  // Simulate network delay for realism (immersive "calculating" feel)
-  await new Promise(resolve => setTimeout(resolve, 800));
+  const startedAt = Date.now();
 
   const commentsDB = getAiComments(lang);
 
-  return batches.map(batch => {
+  const evaluated = batches.map(batch => {
     // 1. Determine Score Tier
     let mainComment = "";
     if (batch.score === 100) mainComment = getRandomComment(commentsDB.perfect);
@@ -287,4 +338,13 @@ export const evaluateBatchAnswers = async (
       details
     };
   });
+
+  // Keep brief analysis feedback, but avoid unnecessary fixed waits.
+  await waitForMinimumDelay(startedAt, 250);
+  trackMetric("quiz.evaluation.latency_ms", Date.now() - startedAt, {
+    batches: batches.length,
+    lang
+  });
+
+  return evaluated;
 };

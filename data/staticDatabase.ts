@@ -2,7 +2,27 @@
 import { QuizQuestion, TOPIC_IDS, Difficulty, Language } from '../types';
 import { TRANSLATIONS } from '../utils/translations';
 
-// Map Category IDs to their dynamic import functions
+// Map Category IDs to their core (top-priority curated subset) import functions
+const CORE_MODULE_MAP: Record<string, () => Promise<any>> = {
+  [TOPIC_IDS.SCIENCE]: () => import('./questions/core/science.core'),
+  [TOPIC_IDS.HISTORY]: () => import('./questions/core/history.core'),
+  [TOPIC_IDS.TECH]: () => import('./questions/core/tech.core'),
+  [TOPIC_IDS.ARTS]: () => import('./questions/core/arts.core'),
+  [TOPIC_IDS.GEOGRAPHY]: () => import('./questions/core/geography.core'),
+  [TOPIC_IDS.GENERAL]: () => import('./questions/core/general.core'),
+  [TOPIC_IDS.MOVIES]: () => import('./questions/core/movies.core'),
+  [TOPIC_IDS.MUSIC]: () => import('./questions/core/music.core'),
+  [TOPIC_IDS.GAMING]: () => import('./questions/core/gaming.core'),
+  [TOPIC_IDS.SPORTS]: () => import('./questions/core/sports.core'),
+  [TOPIC_IDS.MYTHOLOGY]: () => import('./questions/core/mythology.core'),
+  [TOPIC_IDS.LITERATURE]: () => import('./questions/core/literature.core'),
+  [TOPIC_IDS.NATURE]: () => import('./questions/core/nature.core'),
+  [TOPIC_IDS.FOOD]: () => import('./questions/core/food.core'),
+  [TOPIC_IDS.SPACE]: () => import('./questions/core/space.core'),
+  [TOPIC_IDS.PHILOSOPHY]: () => import('./questions/core/philosophy.core'),
+};
+
+// Map Category IDs to their legacy/full import functions
 const MODULE_MAP: Record<string, () => Promise<any>> = {
   [TOPIC_IDS.SCIENCE]: () => import('./questions/science'),
   [TOPIC_IDS.HISTORY]: () => import('./questions/history'),
@@ -79,18 +99,25 @@ const loadQuestionsInternal = async (
   difficulty: Difficulty, 
   lang: Language
 ): Promise<QuizQuestion[] | null> => {
-  // 2. Dynamically import the category module
-  const loader = MODULE_MAP[catId];
-  if (!loader) return null;
+  // 2. Resolve key once for both core and legacy lookups
+  const key = `${englishName}_${difficulty}_${lang}`;
 
   try {
+    // 3. Try core DB first (Phase 2 rollout path)
+    const coreLoader = CORE_MODULE_MAP[catId];
+    if (coreLoader) {
+      const coreModule = await coreLoader();
+      const coreDb = Object.values(coreModule)[0] as Record<string, QuizQuestion[]>;
+      if (coreDb?.[key]) return coreDb[key];
+    }
+
+    // 4. Fallback to legacy/full category DB
+    const loader = MODULE_MAP[catId];
+    if (!loader) return null;
+
     const module = await loader();
     const db = Object.values(module)[0] as Record<string, QuizQuestion[]>;
-    
-    // 3. Construct the key: "EnglishName_DIFFICULTY_Language"
-    const key = `${englishName}_${difficulty}_${lang}`;
-    
-    // 4. Return data if exists
+
     return db[key] || null;
 
   } catch (error) {
